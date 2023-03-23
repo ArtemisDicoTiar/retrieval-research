@@ -2,12 +2,12 @@ import time
 import warnings
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Callable, List
 
 import hydra
 from omegaconf import DictConfig
 from pytorch_lightning import Callback
-from pytorch_lightning.loggers import Logger
+from pytorch_lightning.loggers import LightningLoggerBase
 from pytorch_lightning.utilities import rank_zero_only
 
 from src.utils import pylogger, rich_utils
@@ -22,39 +22,47 @@ def task_wrapper(task_func: Callable) -> Callable:
 
     Utilities:
     - Calling the `utils.extras()` before the task is started
-    - Calling the `utils.close_loggers()` after the task is finished or failed
+    - Calling the `utils.close_loggers()` after the task is finished
     - Logging the exception if occurs
+    - Logging the task total execution time
     - Logging the output dir
     """
 
     def wrap(cfg: DictConfig):
 
+        # apply extra utilities
+        extras(cfg)
+
+        if cfg.trainer.accelerator == "cuda":
+            # assert len(str(cfg.trainer.gpus).split(",")) == cfg.trainer.devices, \
+            #     "Hydra `config.trainer.devices` and len(`config.trainer.gpus`) must be equal."
+            try:
+                import os
+
+                os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+                os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
+                    map(lambda i: str(i), list(cfg.trainer.devices))
+                )
+                log.info(f'{os.environ["CUDA_VISIBLE_DEVICES"]=}')
+                cfg.trainer.devices = list(range(len(cfg.trainer.devices)))
+            except Exception as ex:
+                log.exception("CUDA_VISIBLE_DEVICES Setting Error")
+                raise ex
+
         # execute the task
         try:
-
-            # apply extra utilities
-            extras(cfg)
-
+            start_time = time.time()
             metric_dict, object_dict = task_func(cfg=cfg)
-
-        # things to do if exception occurs
         except Exception as ex:
-
-            # save exception to `.log` file
-            log.exception("")
-
-            # when using hydra plugins like Optuna, you might want to disable raising exception
-            # to avoid multirun failure
+            log.exception("")  # save exception to `.log` file
             raise ex
-
-        # things to always do after either success or exception
         finally:
+            path = Path(cfg.paths.output_dir, "exec_time.log")
+            content = f"'{cfg.task_name}' execution time: {time.time() - start_time} (s)"
+            save_file(path, content)  # save task execution time (even if exception occurs)
+            close_loggers()  # close loggers (even if exception occurs so multirun won't fail)
 
-            # display output dir path in terminal
-            log.info(f"Output dir: {cfg.paths.output_dir}")
-
-            # close loggers (even if exception occurs so multirun won't fail)
-            close_loggers()
+        log.info(f"Output dir: {cfg.paths.output_dir}")
 
         return metric_dict, object_dict
 
@@ -91,12 +99,19 @@ def extras(cfg: DictConfig) -> None:
         rich_utils.print_config_tree(cfg, resolve=True, save_to_file=True)
 
 
+@rank_zero_only
+def save_file(path: str, content: str) -> None:
+    """Save file in rank zero mode (only on one process in multi-GPU setup)."""
+    with open(path, "w+") as file:
+        file.write(content)
+
+
 def instantiate_callbacks(callbacks_cfg: DictConfig) -> List[Callback]:
     """Instantiates callbacks from config."""
     callbacks: List[Callback] = []
 
     if not callbacks_cfg:
-        log.warning("No callback configs found! Skipping..")
+        log.warning("Callbacks config is empty.")
         return callbacks
 
     if not isinstance(callbacks_cfg, DictConfig):
@@ -110,12 +125,12 @@ def instantiate_callbacks(callbacks_cfg: DictConfig) -> List[Callback]:
     return callbacks
 
 
-def instantiate_loggers(logger_cfg: DictConfig) -> List[Logger]:
+def instantiate_loggers(logger_cfg: DictConfig) -> List[LightningLoggerBase]:
     """Instantiates loggers from config."""
-    logger: List[Logger] = []
+    logger: List[LightningLoggerBase] = []
 
     if not logger_cfg:
-        log.warning("No logger configs found! Skipping...")
+        log.warning("Logger config is empty.")
         return logger
 
     if not isinstance(logger_cfg, DictConfig):
@@ -158,7 +173,7 @@ def log_hyperparameters(object_dict: dict) -> None:
         p.numel() for p in model.parameters() if not p.requires_grad
     )
 
-    hparams["data"] = cfg["data"]
+    hparams["datamodule"] = cfg["datamodule"]
     hparams["trainer"] = cfg["trainer"]
 
     hparams["callbacks"] = cfg.get("callbacks")
@@ -170,8 +185,7 @@ def log_hyperparameters(object_dict: dict) -> None:
     hparams["seed"] = cfg.get("seed")
 
     # send hparams to all loggers
-    for logger in trainer.loggers:
-        logger.log_hyperparams(hparams)
+    trainer.logger.log_hyperparams(hparams)
 
 
 def get_metric_value(metric_dict: dict, metric_name: str) -> float:
@@ -205,10 +219,3 @@ def close_loggers() -> None:
         if wandb.run:
             log.info("Closing wandb!")
             wandb.finish()
-
-
-@rank_zero_only
-def save_file(path: str, content: str) -> None:
-    """Save file in rank zero mode (only on one process in multi-GPU setup)."""
-    with open(path, "w+") as file:
-        file.write(content)

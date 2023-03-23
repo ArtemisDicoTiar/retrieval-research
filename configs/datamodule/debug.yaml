@@ -1,0 +1,6 @@
+defaults:
+  - default.yaml
+
+test_datasets:
+  - arguana
+  - scifact

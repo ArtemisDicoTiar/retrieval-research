@@ -1,0 +1,29 @@
+_target_: src.datamodule.datamodule.KnnMSMarcoDataModule
+shuffle_train: false
+beir_data_dir: ${paths.beir_dir}
+tokenizer: ${tokenizer}
+train_max_step: 1_280_000
+train_batch_size: 16
+test_batch_size: 64
+workers: 64
+train_dataset: msmarco
+test_datasets:
+  - msmarco
+  - arguana
+  - scifact
+  - scidocs
+  - fiqa
+  - webis-touche2020
+  - nfcorpus
+  - trec-covid-v2
+  - quora
+  - nq
+  - hotpotqa
+  - dbpedia-entity
+  - fever
+  - climate-fever
+#  - cqadupstack
+#  - robust-04
+#  - signal-1M
+#  - trec-news
+#  - bioasq

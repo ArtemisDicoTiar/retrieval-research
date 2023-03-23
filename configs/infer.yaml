@@ -3,28 +3,26 @@
 defaults:
   - _self_
   - tokenizer: default.yaml
-  - datamodule: default.yaml # choose datamodule with `test_dataloader()` for evaluation
+  - datamodule: gpl-and-beir.yaml # choose datamodule with `test_dataloader()` for evaluation
   - model: default.yaml
   - callbacks:
-      - train_validation_writer.yaml
-      #      - prediction_writer.yaml
-      - rich_progress_bar.yaml
+      - rich_progress_bar.yaml # rich_progress_bar only needed for eval.
+      - prediction_writer.yaml
   - logger: wandb.yaml
   - trainer: default.yaml
+  #  - trainer: cpu.yaml
   - paths: default.yaml
   - extras: default.yaml
   - hydra: default.yaml
 
   - experiment: null
 
-task_name: "eval"
+task_name: "infer"
 
 # passing checkpoint path is necessary for evaluation
 ckpt_path: ???
 
-run_name: tmp
-
 logger:
   wandb:
-    name: ${run_name}
+    name: t=${teacher},s=${student}
     tags: ${tags}

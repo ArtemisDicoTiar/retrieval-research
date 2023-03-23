@@ -1,0 +1,7 @@
+defaults:
+  - default.yaml
+
+accelerator: gpu
+gpus: 1, 2, 3
+devices: 3
+strategy: deepspeed_stage_2
